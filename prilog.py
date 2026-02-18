@@ -51,17 +51,13 @@ def get_image_size_for_page(image_path, is_landscape=False, max_width_inches=Non
         # Определяем максимальные размеры в зависимости от ориентации
         if max_width_inches is None:
             if is_landscape:
-                # Альбомная: 297mm x 210mm, отступы 15mm слева/справа, 20mm сверху/снизу
-                # Доступная ширина: 297 - 30 = 267mm = ~10.5 дюймов
-                # Доступная высота: 210 - 40 = 170mm = ~6.7 дюймов
-                max_width_inches = 10.5
-                max_height_inches = 6.7
+                # Альбомная ориентация: ограничения 12 см по высоте и 26 см по ширине
+                max_width_inches = 26.0 / 2.54  # 26 см = ~10.24 дюймов
+                max_height_inches = 12.0 / 2.54  # 12 см = ~4.72 дюймов
             else:
-                # Книжная: 210mm x 297mm, отступы 20mm слева/справа, 15mm сверху/снизу
-                # Доступная ширина: 210 - 40 = 170mm = ~6.7 дюймов
-                # Доступная высота: 297 - 30 = 267mm = ~10.5 дюймов
-                max_width_inches = 6.7
-                max_height_inches = 10.5
+                # Книжная ориентация: ограничения 23 см по высоте и 16 см по ширине
+                max_width_inches = 16.0 / 2.54  # 16 см = ~6.30 дюймов
+                max_height_inches = 23.0 / 2.54  # 23 см = ~9.06 дюймов
         else:
             # Если указана максимальная ширина, вычисляем высоту пропорционально
             max_height_inches = max_width_inches * (original_height_px / original_width_px) if original_width_px > 0 else max_width_inches
@@ -71,11 +67,16 @@ def get_image_size_for_page(image_path, is_landscape=False, max_width_inches=Non
         original_width_inches = original_width_px / 96.0
         original_height_inches = original_height_px / 96.0
         
+        # Проверяем, нужно ли уменьшать изображение
+        # Если изображение меньше максимальных размеров, оставляем как есть
+        if original_width_inches <= max_width_inches and original_height_inches <= max_height_inches:
+            return (original_width_inches, original_height_inches)
+        
         # Вычисляем коэффициенты масштабирования
         width_ratio = max_width_inches / original_width_inches if original_width_inches > 0 else 1.0
         height_ratio = max_height_inches / original_height_inches if original_height_inches > 0 else 1.0
         
-        # Используем меньший коэффициент, чтобы изображение влезло
+        # Используем меньший коэффициент, чтобы изображение влезло в оба ограничения
         ratio = min(width_ratio, height_ratio, 1.0)  # Не увеличиваем, только уменьшаем
         
         final_width = original_width_inches * ratio
@@ -90,8 +91,22 @@ def get_image_size_for_page(image_path, is_landscape=False, max_width_inches=Non
         else:
             return (6.0, 9.0)
 
+def get_fixed_image_size_for_logger_screenshots():
+    """
+    Возвращает фиксированный размер для скриншотов логгеров в приложении 5.
+    Размер: высота 12.10 см, ширина 26 см.
+    
+    Returns:
+        tuple: (width_inches, height_inches) - фиксированные размеры для вставки
+    """
+    # Конвертируем сантиметры в дюймы (1 дюйм = 2.54 см)
+    width_inches = 26.0 / 2.54
+    height_inches = 12.10 / 2.54
+    return (width_inches, height_inches)
+
 def create_appendices(doc, images, saved_risk_areas, selected_template, period_images, 
-                     selected_recommendations=None, use_humidity=False, logger_screenshots=None):
+                     selected_recommendations=None, use_humidity=False, logger_screenshots=None,
+                     image_orientations=None):
     """Создание приложений. logger_screenshots: список [(номер_логгера, путь_к_скриншоту), ...]"""
     template_value = selected_template
     if hasattr(selected_template, 'get'):
@@ -102,6 +117,14 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
     is_fridge = template_value in ("Холодильник/Морозильник", "ХОЛОДИЛЬНИК(БЕЗ ОТКРЫТИЯ)")
     landscape_for_app1_3 = is_object or is_zone  # Альбомная для объект/зона всегда
     logger_screenshots = logger_screenshots or []
+    image_orientations = image_orientations or {}
+    
+    # Функция для определения ориентации страницы на основе ориентации изображения
+    def get_page_orientation(image_key, default_orientation='portrait'):
+        """Определяет ориентацию страницы на основе ориентации изображения"""
+        if image_key in image_orientations:
+            return image_orientations[image_key]
+        return default_orientation
 
     # Создание нового стиля для заголовков приложений (если не существует)
     if 'Appendix Heading' not in doc.styles:
@@ -121,8 +144,9 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
         p = doc.add_paragraph(text, style='Appendix Heading')
         return p
 
-    # Приложение 1: для объект/зона с влажностью — альбомная ориентация
-    if landscape_for_app1_3:
+    # Приложение 1: определяем ориентацию на основе изображения планировки
+    app1_orientation = get_page_orientation('layout', 'portrait')
+    if app1_orientation == 'landscape':
         sect = doc.add_section(WD_SECTION.NEW_PAGE)
         sect.orientation = WD_ORIENT.LANDSCAPE
         sect.page_width = Mm(297)
@@ -131,6 +155,15 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
         sect.bottom_margin = Mm(20)
         sect.left_margin = Mm(15)
         sect.right_margin = Mm(15)
+    else:
+        sect = doc.add_section(WD_SECTION.NEW_PAGE)
+        sect.orientation = WD_ORIENT.PORTRAIT
+        sect.page_width = Mm(210)
+        sect.page_height = Mm(297)
+        sect.top_margin = Mm(15)
+        sect.bottom_margin = Mm(15)
+        sect.left_margin = Mm(20)
+        sect.right_margin = Mm(20)
 
     add_appendix_heading("Приложение 1")
     add_appendix_heading("Планировка зоны хранения лекарственных средств")
@@ -142,7 +175,10 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
         p.paragraph_format.space_before = Pt(6)  # Добавляем 6 пт перед изображением
         p.paragraph_format.space_after = Pt(6)   # Добавляем 6 пт после изображения
         run = p.add_run()
-        width_inches, height_inches = get_image_size_for_page(images['layout'], is_landscape=landscape_for_app1_3)
+        # Определяем ориентацию для изображения планировки
+        layout_orientation = image_orientations.get('layout', 'portrait')
+        is_landscape = layout_orientation == 'landscape'
+        width_inches, height_inches = get_image_size_for_page(images['layout'], is_landscape=is_landscape)
         run.add_picture(images['layout'], width=Inches(width_inches), height=Inches(height_inches))
     else:
         doc.add_paragraph("Изображение планировки не загружено")
@@ -292,9 +328,10 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
     else:
         print(f"Файл {rrr_path} не найден")
 
-    # Приложение 3: для объект/зона с влажностью — альбомная ориентация
+    # Приложение 3: определяем ориентацию на основе изображения схемы размещения логгеров
+    app3_orientation = get_page_orientation('loggers', 'portrait')
     section = doc.add_section(WD_SECTION.NEW_PAGE)
-    if landscape_for_app1_3:
+    if app3_orientation == 'landscape':
         section.orientation = WD_ORIENT.LANDSCAPE
         section.page_width = Mm(297)
         section.page_height = Mm(210)
@@ -324,7 +361,10 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
         p.paragraph_format.space_before = Pt(6)  # Добавляем 6 пт перед изображением
         p.paragraph_format.space_after = Pt(6)   # Добавляем 6 пт после изображения
         run = p.add_run()
-        width_inches, height_inches = get_image_size_for_page(images['loggers'], is_landscape=landscape_for_app1_3)
+        # Определяем ориентацию для изображения схемы размещения логгеров
+        loggers_orientation = image_orientations.get('loggers', 'portrait')
+        is_landscape = loggers_orientation == 'landscape'
+        width_inches, height_inches = get_image_size_for_page(images['loggers'], is_landscape=is_landscape)
         run.add_picture(images['loggers'], width=Inches(width_inches), height=Inches(height_inches))
     else:
         doc.add_paragraph("Изображение планировки не загружено")
@@ -348,13 +388,21 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
         table_heading = doc.add_paragraph()
         run = table_heading.add_run()
         run.add_tab()
-        run = table_heading.add_run("На рисунке 4.1 представлен график распределения температуры в зоне хранения лекарственных средств (в холодильнике) при режиме терморегуляции №1 на протяжении всего времени исследования")
+        run = table_heading.add_run("На рисунке 4.1 представлен график распределения температуры в зоне хранения лекарственных средств на протяжении всего времени ис-следования. Рисунок 4.1 – График распределения температуры в зоне хранения лекарственных средств на протяжении всего времени исследования")
         run.font.name = 'Times New Roman'
         run.font.size = Pt(12)
         table_heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
         table_heading.paragraph_format.space_after = Pt(6)
 
-    
+        # Добавляем "Добавить график" между блоками
+        add_graph_text = doc.add_paragraph()
+        add_graph_text.add_run().add_tab()
+        run = add_graph_text.add_run("Добавить график")
+        run.font.name = 'Times New Roman'
+        run.font.size = Pt(12)
+        add_graph_text.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        add_graph_text.paragraph_format.space_after = Pt(6)
+
         # График температуры для первого периода
         if period_images and 1 in period_images and 'temp_fridge' in period_images[1]:
             # Создаем параграф для изображения и центрируем его
@@ -364,29 +412,26 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
             width_inches, height_inches = get_image_size_for_page(period_images[1]['temp_fridge'], is_landscape=True)
             run.add_picture(period_images[1]['temp_fridge'], width=Inches(width_inches), height=Inches(height_inches))
 
-
-        # Добавление подписи к рисунку
-        caption = doc.add_paragraph("Рисунок 4.1 – График распределения температуры в зоне хранения лекарственных средств (в холодильнике) при режиме терморегуляции №1 на протяжении всего времени исследования")
-        caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        for run in caption.runs:
-            run.font.name = 'Times New Roman'
-            run.font.size = Pt(12)
-        caption.paragraph_format.space_before = Pt(6)
-
         # Холодильник: листы 4.2 и 4.3
         doc.add_page_break()
         table_heading = doc.add_paragraph()
         run = table_heading.add_run()
         run.add_tab()
-        run = table_heading.add_run("На рисунке 4.2 представлен график распределения температуры около зоны хранения лекарственных средств на протяжении всего времени исследования")
+        run = table_heading.add_run("На рисунке 4.2 представлен график распределения температуры около зоны хранения лекарственных средств на протяжении всего времени исследования. Рисунок 4.2 – График распределения температуры около зоны хранения лекарственных средств на протяжении всего времени исследования")
         run.font.name = 'Times New Roman'
         run.font.size = Pt(12)
         table_heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
         table_heading.paragraph_format.space_after = Pt(6)
-        p_graf = doc.add_paragraph("График")
-        for r in p_graf.runs:
-            r.font.name = 'Times New Roman'
-            r.font.size = Pt(12)
+
+        # Добавляем "Добавить график" между блоками
+        add_graph_text = doc.add_paragraph()
+        add_graph_text.add_run().add_tab()
+        run = add_graph_text.add_run("Добавить график")
+        run.font.name = 'Times New Roman'
+        run.font.size = Pt(12)
+        add_graph_text.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        add_graph_text.paragraph_format.space_after = Pt(6)
+
         if period_images and 1 in period_images and 'temp_external' in period_images[1]:
             p = doc.add_paragraph()
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -395,26 +440,17 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
             run.add_picture(period_images[1]['temp_external'], width=Inches(width_inches), height=Inches(height_inches))
         else:
             doc.add_paragraph("График не загружен")
-        caption = doc.add_paragraph("Рисунок 4.2 – График распределения температуры около зоны хранения лекарственных средств на протяжении всего времени исследования")
-        caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        for run in caption.runs:
-            run.font.name = 'Times New Roman'
-            run.font.size = Pt(12)
-        caption.paragraph_format.space_before = Pt(6)
 
         doc.add_page_break()
         table_heading = doc.add_paragraph()
         run = table_heading.add_run()
         run.add_tab()
-        run = table_heading.add_run("На рисунке 4.3 представлен график распределения относительной влажности около зоны хранения лекарственных средств на протяжении всего времени исследования")
+        run = table_heading.add_run("На рисунке 4.3 представлен график распределения относительной влажности около зоны хранения лекарственных средств на протяжении всего времени исследования. Рисунок 4.3 – График распределения относительной влажности около зоны хранения лекарственных средств на протяжении всего времени исследования")
         run.font.name = 'Times New Roman'
         run.font.size = Pt(12)
         table_heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
         table_heading.paragraph_format.space_after = Pt(6)
-        p_graf = doc.add_paragraph("График")
-        for r in p_graf.runs:
-            r.font.name = 'Times New Roman'
-            r.font.size = Pt(12)
+
         if period_images and 1 in period_images and 'humidity_external' in period_images[1]:
             p = doc.add_paragraph()
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -423,12 +459,6 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
             run.add_picture(period_images[1]['humidity_external'], width=Inches(width_inches), height=Inches(height_inches))
         else:
             doc.add_paragraph("График не загружен")
-        caption = doc.add_paragraph("Рисунок 4.3 – График распределения относительной влажности около зоны хранения лекарственных средств на протяжении всего времени исследования")
-        caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        for run in caption.runs:
-            run.font.name = 'Times New Roman'
-            run.font.size = Pt(12)
-        caption.paragraph_format.space_before = Pt(6)
     elif is_object or is_zone:
         if use_humidity:
             add_appendix_heading("Графики распределения температуры и влажности при проведении исследований")
@@ -439,11 +469,20 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
             table_heading = doc.add_paragraph()
             run = table_heading.add_run()
             run.add_tab()  # Добавляем табуляцию перед текстом
-            run = table_heading.add_run("На рисунке 4.1 представлен график распределения температуры в зоне хранения лекарственных средств на протяжении всего времени ис-следования.")
+            run = table_heading.add_run("На рисунке 4.1 представлен график распределения температуры в зоне хранения лекарственных средств на протяжении всего времени ис-следования. Рисунок 4.1 – График распределения температуры в зоне хранения лекарственных средств на протяжении всего времени исследования")
             run.font.name = 'Times New Roman'
             run.font.size = Pt(12)
             table_heading.alignment = WD_ALIGN_PARAGRAPH.LEFT        
             table_heading.paragraph_format.space_after = Pt(6)
+
+            # Добавляем "Добавить график" между блоками
+            add_graph_text = doc.add_paragraph()
+            add_graph_text.add_run().add_tab()
+            run = add_graph_text.add_run("Добавить график")
+            run.font.name = 'Times New Roman'
+            run.font.size = Pt(12)
+            add_graph_text.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            add_graph_text.paragraph_format.space_after = Pt(6)
 
             p_graf = doc.add_paragraph("График температуры")
             for r in p_graf.runs:
@@ -457,13 +496,14 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
                 run = p.add_run()
                 width_inches, height_inches = get_image_size_for_page(period_images[1]['temp_loggers'], is_landscape=True)
                 run.add_picture(period_images[1]['temp_loggers'], width=Inches(width_inches), height=Inches(height_inches))
-
-            caption = doc.add_paragraph("Рисунок 4.1 – График распределения температуры в зоне хранения лекарственных средств на протяжении всего времени исследования")
-            caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            for run in caption.runs:
-                run.font.name = 'Times New Roman'
-                run.font.size = Pt(12)        
-                caption.paragraph_format.space_before = Pt(6)  # Добавляем 6 пт перед изображением
+                
+                # Добавляем подпись к рисунку
+                caption = doc.add_paragraph("Рисунок 4.1 – График распределения температуры в зоне хранения лекарственных средств на протяжении всего времени исследования")
+                caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                for r in caption.runs:
+                    r.font.name = 'Times New Roman'
+                    r.font.size = Pt(12)
+                caption.paragraph_format.space_before = Pt(6)
 
             # Добавление разрыва страницы
             doc.add_page_break()
@@ -474,7 +514,7 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
                 table_heading = doc.add_paragraph()
                 run = table_heading.add_run()
                 run.add_tab()  # Добавляем табуляцию перед текстом
-                run = table_heading.add_run("На рисунке 4.2 представлен график распределения относительной влажности в зоне хранения лекарственных средств на протяжении всего времени исследования.")
+                run = table_heading.add_run("На рисунке 4.2 представлен график распределения относительной влажности в зоне хранения лекарственных средств на протяжении всего времени исследования. Рисунок 4.2 – График распределения относительной влажности в зоне хранения лекарственных средств на протяжении всего времени исследова-ния")
                 run.font.name = 'Times New Roman'
                 run.font.size = Pt(12)
                 table_heading.alignment = WD_ALIGN_PARAGRAPH.LEFT        
@@ -491,13 +531,14 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
                     run = p.add_run()
                     width_inches, height_inches = get_image_size_for_page(period_images[1]['humidity_loggers'], is_landscape=True)
                     run.add_picture(period_images[1]['humidity_loggers'], width=Inches(width_inches), height=Inches(height_inches))
-
-                caption = doc.add_paragraph("Рисунок 4.2 – График распределения относительной влажности в зоне хранения лекарственных средств на протяжении всего времени исследования")
-                caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                for run in caption.runs:
-                    run.font.name = 'Times New Roman'
-                    run.font.size = Pt(12)        
-                caption.paragraph_format.space_before = Pt(6)  # Добавляем 6 пт перед изображением
+                    
+                    # Добавляем подпись к рисунку
+                    caption = doc.add_paragraph("Рисунок 4.2 – График распределения относительной влажности в зоне хранения лекарственных средств на протяжении всего времени исследования")
+                    caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    for r in caption.runs:
+                        r.font.name = 'Times New Roman'
+                        r.font.size = Pt(12)
+                    caption.paragraph_format.space_before = Pt(6)
 
             # Для зоны хранения добавляем дополнительные графики (температура и влажность около зоны)
             if is_zone:
@@ -506,11 +547,20 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
                 table_heading = doc.add_paragraph()
                 run = table_heading.add_run()
                 run.add_tab()
-                run = table_heading.add_run("На рисунке 4.2 представлен график распределения температуры около зоны хранения лекарственных средств на протяжении всего времени исследования.")
+                run = table_heading.add_run("На рисунке 4.2 представлен график распределения температуры около зоны хранения лекарственных средств на протяжении всего времени исследования. Рисунок 4.2 – График распределения температуры около зоны хранения лекарственных средств на протяжении всего времени исследования")
                 run.font.name = 'Times New Roman'
                 run.font.size = Pt(12)
                 table_heading.alignment = WD_ALIGN_PARAGRAPH.LEFT        
                 table_heading.paragraph_format.space_after = Pt(6)
+
+                # Добавляем "Добавить график" между блоками
+                add_graph_text = doc.add_paragraph()
+                add_graph_text.add_run().add_tab()
+                run = add_graph_text.add_run("Добавить график")
+                run.font.name = 'Times New Roman'
+                run.font.size = Pt(12)
+                add_graph_text.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                add_graph_text.paragraph_format.space_after = Pt(6)
 
                 p_graf = doc.add_paragraph("График")
                 for r in p_graf.runs:
@@ -524,13 +574,6 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
                     width_inches, height_inches = get_image_size_for_page(period_images[1]['temp_external'], is_landscape=True)
                     run.add_picture(period_images[1]['temp_external'], width=Inches(width_inches), height=Inches(height_inches))
 
-                caption = doc.add_paragraph("Рисунок 4.2 – График распределения температуры около зоны хранения лекарственных средств на протяжении всего времени исследования")
-                caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                for run in caption.runs:
-                    run.font.name = 'Times New Roman'
-                    run.font.size = Pt(12)        
-                    caption.paragraph_format.space_before = Pt(6)  # Добавляем 6 пт перед изображением
-
                 # Добавление разрыва страницы
                 doc.add_page_break()
 
@@ -540,7 +583,7 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
                     table_heading = doc.add_paragraph()
                     run = table_heading.add_run()
                     run.add_tab()  # Добавляем табуляцию перед текстом
-                    run = table_heading.add_run("На рисунке 4.3 представлен график распределения относительной влажности около зоны хранения лекарственных средств на протяжении всего времени исследования.")
+                    run = table_heading.add_run("На рисунке 4.3 представлен график распределения относительной влажности в зоне хранения лекарственных средств на протяжении всего времени исследования. Рисунок 4.3 – График распределения относительной влажности в зоне хранения лекарственных средств на протяжении всего времени исследова-ния")
                     run.font.name = 'Times New Roman'
                     run.font.size = Pt(12)
                     table_heading.alignment = WD_ALIGN_PARAGRAPH.LEFT        
@@ -558,12 +601,15 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
                     for r in p_graf.runs:
                         r.font.name = 'Times New Roman'
                         r.font.size = Pt(12)
-                    caption = doc.add_paragraph("Рисунок 4.3 – График распределения относительной влажности около зоны хранения лекарственных средств на протяжении всего времени исследования")
-                    caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    for run in caption.runs:
-                        run.font.name = 'Times New Roman'
-                        run.font.size = Pt(12)        
-                        caption.paragraph_format.space_before = Pt(6)  # Добавляем 6 пт перед изображением
+                    
+                    # Добавляем "Добавить график" между блоками
+                    add_graph_text = doc.add_paragraph()
+                    add_graph_text.add_run().add_tab()
+                    run = add_graph_text.add_run("Добавить график")
+                    run.font.name = 'Times New Roman'
+                    run.font.size = Pt(12)
+                    add_graph_text.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                    add_graph_text.paragraph_format.space_after = Pt(6)
 
                     # Добавление разрыва страницы
                     doc.add_page_break()
@@ -572,7 +618,7 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
                     table_heading = doc.add_paragraph()
                     run = table_heading.add_run()
                     run.add_tab()  # Добавляем табуляцию перед текстом
-                    run = table_heading.add_run("На рисунке 4.4 представлен график распределения относительной влажности около зоны хранения лекарственных средств на протяжении всего времени исследования.")
+                    run = table_heading.add_run("На рисунке 4.4 представлен график распределения относительной влажности около зоны хранения лекарственных средств на протяжении всего времени исследования. Рисунок 4.4 – График распределения относительной влажности около зоны хранения лекарственных средств на протяжении всего времени исследования")
                     run.font.name = 'Times New Roman'
                     run.font.size = Pt(12)
                     table_heading.alignment = WD_ALIGN_PARAGRAPH.LEFT       
@@ -590,14 +636,14 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
                         run = p.add_run()
                         width_inches, height_inches = get_image_size_for_page(period_images[1]['humidity_external'], is_landscape=True)
                         run.add_picture(period_images[1]['humidity_external'], width=Inches(width_inches), height=Inches(height_inches))
-
-                    # Добавление подписи к рисунку
-                    caption = doc.add_paragraph("Рисунок 4.4 – График распределения относительной влажности около зоны хранения лекарственных средств на протяжении всего времени исследования ")
-                    caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    for run in caption.runs:
-                        run.font.name = 'Times New Roman'
-                        run.font.size = Pt(12)        
-                        caption.paragraph_format.space_before = Pt(6)  # Добавляем 6 пт перед изображением
+                        
+                        # Добавляем подпись к рисунку
+                        caption = doc.add_paragraph("Рисунок 4.4 – График распределения относительной влажности около зоны хранения лекарственных средств на протяжении всего времени исследования")
+                        caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        for r in caption.runs:
+                            r.font.name = 'Times New Roman'
+                            r.font.size = Pt(12)
+                        caption.paragraph_format.space_before = Pt(6)
 
     # Приложение 5: Графики по логгерам (динамические)
     if logger_screenshots:
@@ -635,7 +681,7 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
                 p.paragraph_format.space_before = Pt(6)  # Добавляем 6 пт перед изображением
                 p.paragraph_format.space_after = Pt(6)   # Добавляем 6 пт после изображения
                 run = p.add_run()
-                width_inches, height_inches = get_image_size_for_page(img_path, is_landscape=(is_object or is_zone))
+                width_inches, height_inches = get_fixed_image_size_for_logger_screenshots()
                 run.add_picture(img_path, width=Inches(width_inches), height=Inches(height_inches))
             else:
                 doc.add_paragraph("Изображение не загружено")
@@ -650,9 +696,17 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
             if idx < len(logger_screenshots):
                 doc.add_page_break()
 
-    # Приложение 6: Карты (для объект/зона альбомная, для холодильника портретная)
+    # Приложение 6: Температурная и влажностная карты
     section6 = doc.add_section(WD_SECTION.NEW_PAGE)
-    if is_object or is_zone:
+    
+    # Определяем ориентацию для температурной карты
+    if is_fridge:
+        temp_orientation = 'portrait'  # Для холодильника всегда книжная
+    else:
+        # Для объекта/зоны используем ориентацию температурной карты
+        temp_orientation = get_page_orientation('temp_map', 'landscape')
+    
+    if temp_orientation == 'landscape':
         section6.orientation = WD_ORIENT.LANDSCAPE
         section6.page_width = Mm(297)
         section6.page_height = Mm(210)
@@ -668,6 +722,7 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
         section6.bottom_margin = Mm(15)
         section6.left_margin = Mm(20)
         section6.right_margin = Mm(20)
+    
     add_appendix_heading("Приложение 6")
     if is_fridge:
         add_appendix_heading("Температурная карта")
@@ -689,7 +744,10 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
             p = doc.add_paragraph()
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             run = p.add_run()
-            width_inches, height_inches = get_image_size_for_page(images['temp_map'], is_landscape=False)
+            # Определяем ориентацию для изображения температурной карты
+            temp_map_orientation = image_orientations.get('temp_map', 'portrait')
+            is_landscape = temp_map_orientation == 'landscape'
+            width_inches, height_inches = get_image_size_for_page(images['temp_map'], is_landscape=is_landscape)
             run.add_picture(images['temp_map'], width=Inches(width_inches), height=Inches(height_inches))
         else:
             doc.add_paragraph("Изображение планировки не загружено")
@@ -712,7 +770,10 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
             p.paragraph_format.space_before = Pt(6)
             p.paragraph_format.space_after = Pt(6)
             run = p.add_run()
-            width_inches, height_inches = get_image_size_for_page(images['temp_map'], is_landscape=True)
+            # Определяем ориентацию для изображения температурной карты
+            temp_map_orientation = image_orientations.get('temp_map', 'portrait')
+            is_landscape = temp_map_orientation == 'landscape'
+            width_inches, height_inches = get_image_size_for_page(images['temp_map'], is_landscape=is_landscape)
             run.add_picture(images['temp_map'], width=Inches(width_inches), height=Inches(height_inches))
         else:
             doc.add_paragraph("Изображение планировки не загружено")
@@ -724,7 +785,28 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
 
         # Добавляем влажностную карту только если она учитывается
         if use_humidity:
-            doc.add_page_break()
+            # Создаем новую секцию для влажностной карты (без разрыва страницы)
+            section6_humidity = doc.add_section(WD_SECTION.CONTINUOUS)
+            
+            # Определяем ориентацию для влажностной карты
+            humidity_orientation = get_page_orientation('humidity_map', 'portrait')
+            
+            if humidity_orientation == 'landscape':
+                section6_humidity.orientation = WD_ORIENT.LANDSCAPE
+                section6_humidity.page_width = Mm(297)
+                section6_humidity.page_height = Mm(210)
+                section6_humidity.top_margin = Mm(20)
+                section6_humidity.bottom_margin = Mm(20)
+                section6_humidity.left_margin = Mm(15)
+                section6_humidity.right_margin = Mm(15)
+            else:
+                section6_humidity.orientation = WD_ORIENT.PORTRAIT
+                section6_humidity.page_width = Mm(210)
+                section6_humidity.page_height = Mm(297)
+                section6_humidity.top_margin = Mm(15)
+                section6_humidity.bottom_margin = Mm(15)
+                section6_humidity.left_margin = Mm(20)
+                section6_humidity.right_margin = Mm(20)
 
             table_heading = doc.add_paragraph()
             run = table_heading.add_run()
@@ -739,12 +821,15 @@ def create_appendices(doc, images, saved_risk_areas, selected_template, period_i
                 p.paragraph_format.space_before = Pt(6)
                 p.paragraph_format.space_after = Pt(6)
                 run = p.add_run()
-                width_inches, height_inches = get_image_size_for_page(images['humidity_map'], is_landscape=True)
+                # Определяем ориентацию для изображения влажностной карты
+                humidity_map_orientation = image_orientations.get('humidity_map', 'portrait')
+                is_landscape = humidity_map_orientation == 'landscape'
+                width_inches, height_inches = get_image_size_for_page(images['humidity_map'], is_landscape=is_landscape)
                 run.add_picture(images['humidity_map'], width=Inches(width_inches), height=Inches(height_inches))
             else:
                 doc.add_paragraph("Изображение планировки не загружено")
-        caption = doc.add_paragraph("Рисунок 6.2 – Влажностная карта зоны хранения лекарственных средств за весь период исследования")
-        caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        for r in caption.runs:
-            r.font.name = 'Times New Roman'
-            r.font.size = Pt(12)
+            caption = doc.add_paragraph("Рисунок 6.2 – Влажностная карта зоны хранения лекарственных средств за весь период исследования")
+            caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            for r in caption.runs:
+                r.font.name = 'Times New Roman'
+                r.font.size = Pt(12)

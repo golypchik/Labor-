@@ -9,6 +9,7 @@ from tkinter import ttk, filedialog, messagebox
 from datetime import datetime
 from pathlib import Path
 from PIL import Image, ImageTk
+from gui.clipboard_manager import setup_clipboard_manager
 
 
 class KeyElementsFrame:
@@ -46,14 +47,13 @@ class KeyElementsFrame:
             "Температурный режим:": "+15℃…+25℃",
             "Влажностный режим:": "не более 60%",
             "Дата проведения картирования:": "22.01.2026 – 26.01.2026",
-            "Дата и время проведения картирования:": "22.01.2026 10:00 – 26.01.2026 10:00",
             "Вид картирования:": "Первичное",
             "Дата подписания:": "22.01.2026",
             "Должность сотрудника фирмы:": "Главный врач УЗ «11-я городская клиническая больница»",
             "ФИО сотрудника:": "Часнойть А.Ч.",
             "Площадь помещения:": "14,5",
             "Упрощенное название:": "УЗ «11 городская клиническая больница»",
-            "Время проведения исследования:": "3 дня 12 часов",
+            "Время всего исследования:": "3 дня 12 часов",
             "Дата проведения повторного картирования:": "30.10.2028",
             "Интервал:": "1 минута",
         }
@@ -78,18 +78,33 @@ class KeyElementsFrame:
         # Привязка прокрутки колесиком мыши и тачпадом
         def _on_mousewheel(event):
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            return "break"  # Останавливаем распространение события
         canvas.bind("<MouseWheel>", _on_mousewheel)
 
         # Для Linux с Button-4 и Button-5
         def _on_button4(event):
             canvas.yview_scroll(-1, "units")
+            return "break"  # Останавливаем распространение события
         def _on_button5(event):
             canvas.yview_scroll(1, "units")
+            return "break"  # Останавливаем распространение события
         canvas.bind("<Button-4>", _on_button4)
         canvas.bind("<Button-5>", _on_button5)
         
+        # Привязка глобальной прокрутки к canvas
+        def _on_canvas_mousewheel(event):
+            # Если это вертикальная прокрутка, передаем управление глобальной системе
+            if hasattr(self, 'parent') and hasattr(self.parent, 'master'):
+                # Имитируем событие на главном окне
+                self.parent.master.event_generate("<MouseWheel>", delta=event.delta, when="tail")
+            return "break"
+        canvas.bind("<MouseWheel>", _on_canvas_mousewheel, add="+")
+        
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+        
+        # Инициализируем менеджер буфера обмена для этого фрейма
+        self.clipboard_manager = setup_clipboard_manager(self.parent)
         
         # Заголовок
         title_label = tk.Label(
@@ -123,14 +138,13 @@ class KeyElementsFrame:
             ("Температурный режим:", self.temp_mode),
             ("Влажностный режим:", self.humidity_mode),
             ("Дата проведения картирования:", self.mapping_date),
-            ("Дата и время проведения картирования:", self.mapping_datetime),
             ("Вид картирования:", self.mapping_type),
             ("Дата подписания:", self.signature_date),
             ("Должность сотрудника фирмы:", self.employee_position),
             ("ФИО сотрудника:", self.employee_name),
             ("Площадь помещения:", self.area),
             ("Упрощенное название:", self.certificate_continuation_copy),
-            ("Время проведения исследования:", self.research_time),
+            ("Время всего исследования:", self.research_time),
             ("Дата проведения повторного картирования:", self.repeated_mapping_date),
             ("Интервал:", self.interval),
         ]
@@ -172,24 +186,38 @@ class KeyElementsFrame:
 
                 # Привязка прокрутки колесиком мыши
                 def _on_mousewheel(event):
-                    # Обрабатываем разные значения delta для мыши и тачпада
-                    delta = event.delta
-                    if abs(delta) > 120:  # Тачпад часто дает большие значения
-                        delta = delta // 10  # Нормализуем
-                    entry.xview_scroll(int(-1 * (delta / 120)), "units")
+                    # Если поле активно и в нем идет работа - обрабатываем прокрутку внутри поля
+                    if entry.focus_displayof() == entry and entry['state'] != 'disabled':
+                        # Обрабатываем разные значения delta для мыши и тачпада
+                        delta = event.delta
+                        if abs(delta) > 120:  # Тачпад часто дает большие значения
+                            delta = delta // 10  # Нормализуем
+                        entry.xview_scroll(int(-1 * (delta / 120)), "units")
+                        return "break"  # Останавливаем распространение события
+                    # Если поле не активно - не перехватываем прокрутку, пусть всплывает к глобальному обработчику
                 entry.bind("<MouseWheel>", _on_mousewheel)
 
                 # Для Linux с Button-4 и Button-5 (тачпад)
                 def _on_button4(event):
-                    entry.xview_scroll(-1, "units")
+                    if entry.focus_displayof() == entry and entry['state'] != 'disabled':
+                        entry.xview_scroll(-1, "units")
+                        return "break"  # Останавливаем распространение события
                 def _on_button5(event):
-                    entry.xview_scroll(1, "units")
+                    if entry.focus_displayof() == entry and entry['state'] != 'disabled':
+                        entry.xview_scroll(1, "units")
+                        return "break"  # Останавливаем распространение события
                 entry.bind("<Button-4>", _on_button4)
                 entry.bind("<Button-5>", _on_button5)
 
                 # Дополнительные события для тачпадов
-                entry.bind("<ButtonPress-4>", lambda e: entry.xview_scroll(-1, "units"))
-                entry.bind("<ButtonPress-5>", lambda e: entry.xview_scroll(1, "units"))
+                def _on_button_press_4(event):
+                    if entry.focus_displayof() == entry and entry['state'] != 'disabled':
+                        entry.xview_scroll(-1, "units")
+                def _on_button_press_5(event):
+                    if entry.focus_displayof() == entry and entry['state'] != 'disabled':
+                        entry.xview_scroll(1, "units")
+                entry.bind("<ButtonPress-4>", _on_button_press_4)
+                entry.bind("<ButtonPress-5>", _on_button_press_5)
 
                 entry.pack(side=tk.TOP)
                 h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
@@ -218,24 +246,38 @@ class KeyElementsFrame:
 
                 # Привязка прокрутки колесиком мыши и тачпадом
                 def _on_mousewheel(event):
-                    # Обрабатываем разные значения delta для мыши и тачпада
-                    delta = event.delta
-                    if abs(delta) > 120:  # Тачпад часто дает большие значения
-                        delta = delta // 10  # Нормализуем
-                    text_widget.yview_scroll(int(-1 * (delta / 120)), "units")
+                    # Если поле активно и в нем идет работа - обрабатываем прокрутку внутри поля
+                    if text_widget.focus_get() == text_widget and text_widget['state'] != 'disabled':
+                        # Обрабатываем разные значения delta для мыши и тачпада
+                        delta = event.delta
+                        if abs(delta) > 120:  # Тачпад часто дает большие значения
+                            delta = delta // 10  # Нормализуем
+                        text_widget.yview_scroll(int(-1 * (delta / 120)), "units")
+                        return "break"  # Останавливаем распространение события
+                    # Если поле не активно - не перехватываем прокрутку, пусть всплывает к глобальному обработчику
                 text_widget.bind("<MouseWheel>", _on_mousewheel)
 
                 # Для Linux с Button-4 и Button-5 (тачпад)
                 def _on_button4(event):
-                    text_widget.yview_scroll(-1, "units")
+                    if text_widget.focus_get() == text_widget and text_widget['state'] != 'disabled':
+                        text_widget.yview_scroll(-1, "units")
+                        return "break"  # Останавливаем распространение события
                 def _on_button5(event):
-                    text_widget.yview_scroll(1, "units")
+                    if text_widget.focus_get() == text_widget and text_widget['state'] != 'disabled':
+                        text_widget.yview_scroll(1, "units")
+                        return "break"  # Останавливаем распространение события
                 text_widget.bind("<Button-4>", _on_button4)
                 text_widget.bind("<Button-5>", _on_button5)
 
                 # Дополнительные события для тачпадов
-                text_widget.bind("<ButtonPress-4>", lambda e: text_widget.yview_scroll(-1, "units"))
-                text_widget.bind("<ButtonPress-5>", lambda e: text_widget.yview_scroll(1, "units"))
+                def _on_button_press_4(event):
+                    if text_widget.focus_get() == text_widget and text_widget['state'] != 'disabled':
+                        text_widget.yview_scroll(-1, "units")
+                def _on_button_press_5(event):
+                    if text_widget.focus_get() == text_widget and text_widget['state'] != 'disabled':
+                        text_widget.yview_scroll(1, "units")
+                text_widget.bind("<ButtonPress-4>", _on_button_press_4)
+                text_widget.bind("<ButtonPress-5>", _on_button_press_5)
 
                 # Создаем уникальные функции для каждого текстового виджета
                 def update_var(widget=text_widget, variable=var):
@@ -253,6 +295,10 @@ class KeyElementsFrame:
 
                 text_widget.bind("<KeyRelease>", update_var())
                 var.trace_add("write", update_text())
+                
+                # Добавляем контекстное меню для Text виджетов
+                self.clipboard_manager.create_context_menu(text_widget)
+                
                 self.entry_widgets[label_text] = text_widget
             elif label_text == "Вид картирования:":
                 # Выпадающий список с возможностью свободного ввода
@@ -286,28 +332,45 @@ class KeyElementsFrame:
 
                 # Привязка прокрутки колесиком мыши
                 def _on_mousewheel(event):
-                    # Обрабатываем разные значения delta для мыши и тачпада
-                    delta = event.delta
-                    if abs(delta) > 120:  # Тачпад часто дает большие значения
-                        delta = delta // 10  # Нормализуем
-                    entry.xview_scroll(int(-1 * (delta / 120)), "units")
+                    # Если поле активно и в нем идет работа - обрабатываем прокрутку внутри поля
+                    if entry.focus_displayof() == entry and entry['state'] != 'disabled':
+                        # Обрабатываем разные значения delta для мыши и тачпада
+                        delta = event.delta
+                        if abs(delta) > 120:  # Тачпад часто дает большие значения
+                            delta = delta // 10  # Нормализуем
+                        entry.xview_scroll(int(-1 * (delta / 120)), "units")
+                        return "break"  # Останавливаем распространение события
+                    # Если поле не активно - не перехватываем прокрутку, пусть всплывает к глобальному обработчику
                 entry.bind("<MouseWheel>", _on_mousewheel)
 
                 # Для Linux с Button-4 и Button-5 (тачпад)
                 def _on_button4(event):
-                    entry.xview_scroll(-1, "units")
+                    if entry.focus_displayof() == entry and entry['state'] != 'disabled':
+                        entry.xview_scroll(-1, "units")
+                        return "break"  # Останавливаем распространение события
                 def _on_button5(event):
-                    entry.xview_scroll(1, "units")
+                    if entry.focus_displayof() == entry and entry['state'] != 'disabled':
+                        entry.xview_scroll(1, "units")
+                        return "break"  # Останавливаем распространение события
                 entry.bind("<Button-4>", _on_button4)
                 entry.bind("<Button-5>", _on_button5)
 
                 # Дополнительные события для тачпадов
-                entry.bind("<ButtonPress-4>", lambda e: entry.xview_scroll(-1, "units"))
-                entry.bind("<ButtonPress-5>", lambda e: entry.xview_scroll(1, "units"))
+                def _on_button_press_4(event):
+                    if entry.focus_displayof() == entry and entry['state'] != 'disabled':
+                        entry.xview_scroll(-1, "units")
+                def _on_button_press_5(event):
+                    if entry.focus_displayof() == entry and entry['state'] != 'disabled':
+                        entry.xview_scroll(1, "units")
+                entry.bind("<ButtonPress-4>", _on_button_press_4)
+                entry.bind("<ButtonPress-5>", _on_button_press_5)
 
                 entry.pack(side=tk.TOP)
                 h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
                 self.entry_widgets[label_text] = entry
+
+                # Добавляем контекстное меню для виджетов ввода
+                self.clipboard_manager.create_context_menu(entry)
 
             # Кнопка очистки поля (ставим перед подсказкой)
             if label_text in self.field_hints:
@@ -338,7 +401,21 @@ class KeyElementsFrame:
                     borderwidth=1
                 )
                 hint_text_widget.insert("1.0", hint_text)
-                hint_text_widget.config(state=tk.DISABLED)  # Только для чтения, но можно выделять
+                hint_text_widget.config(state=tk.NORMAL)  # Сделаем редактируемым для копирования
+                hint_text_widget.config(state=tk.DISABLED)  # Но заблокируем редактирование
+                
+                # Добавляем контекстное меню для подсказок
+                self.clipboard_manager.create_context_menu(hint_text_widget)
+                
+                # Добавляем обработку двойного клика для выделения всего текста
+                def select_all_on_double_click(event, widget=hint_text_widget):
+                    widget.tag_add(tk.SEL, "1.0", tk.END)
+                    widget.mark_set(tk.INSERT, "1.0")
+                    widget.see(tk.INSERT)
+                    return "break"
+                
+                hint_text_widget.bind("<Double-Button-1>", select_all_on_double_click)
+                
                 hint_text_widget.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
         
         # Загрузка фото
@@ -631,14 +708,13 @@ class KeyElementsFrame:
                     ("Температурный режим:", self.temp_mode),
                     ("Влажностный режим:", self.humidity_mode),
                     ("Дата проведения картирования:", self.mapping_date),
-                    ("Дата и время проведения картирования:", self.mapping_datetime),
                     ("Вид картирования:", self.mapping_type),
                     ("Дата подписания:", self.signature_date),
                     ("Должность сотрудника фирмы:", self.employee_position),
                     ("ФИО сотрудника:", self.employee_name),
                     ("Площадь помещения:", self.area),
                     ("Упрощенное название:", self.certificate_continuation_copy),
-                    ("Время проведения исследования:", self.research_time),
+                    ("Время всего исследования:", self.research_time),
                     ("Дата проведения повторного картирования:", self.repeated_mapping_date),
                     ("Интервал:", self.interval),
                 ]:
@@ -725,7 +801,6 @@ class KeyElementsFrame:
             'temp_mode': self.temp_mode.get(),
             'humidity_mode': self.humidity_mode.get(),
             'mapping_date': self.mapping_date.get(),
-            'mapping_datetime': self.mapping_datetime.get(),
             'mapping_type': self.mapping_type.get(),
             'signature_date': self.signature_date.get(),
             'employee_position': self.employee_position.get(),
@@ -761,14 +836,13 @@ class KeyElementsFrame:
                     ("Температурный режим:", self.temp_mode),
                     ("Влажностный режим:", self.humidity_mode),
                     ("Дата проведения картирования:", self.mapping_date),
-                    ("Дата и время проведения картирования:", self.mapping_datetime),
                     ("Вид картирования:", self.mapping_type),
                     ("Дата подписания:", self.signature_date),
                     ("Должность сотрудника фирмы:", self.employee_position),
                     ("ФИО сотрудника:", self.employee_name),
                     ("Площадь помещения:", self.area),
                     ("Упрощенное название:", self.certificate_continuation_copy),
-                    ("Время проведения исследования:", self.research_time),
+                    ("Время всего исследования:", self.research_time),
                     ("Дата проведения повторного картирования:", self.repeated_mapping_date),
                     ("Интервал:", self.interval),
                 ]:

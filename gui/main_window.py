@@ -14,6 +14,7 @@ from gui.project_management_frame import ProjectManagementFrame
 from gui.key_elements_frame import KeyElementsFrame
 from gui.other_info_frame import OtherInfoFrame
 from gui.tables_creation_frame import TablesCreationFrame
+from gui.clipboard_manager import setup_clipboard_manager
 
 
 class MainWindow:
@@ -28,6 +29,9 @@ class MainWindow:
         self.project_root = Path(__file__).parent.parent
         self.logo_path = self.project_root / "image" / "logo.png"
         
+        # Инициализируем менеджер буфера обмена
+        self.clipboard_manager = setup_clipboard_manager(root)
+        
         self.create_widgets()
     
     def create_widgets(self):
@@ -40,6 +44,9 @@ class MainWindow:
         
         # Загрузка и отображение логотипа
         self.load_logo()
+        
+        # Настройка глобальной прокрутки
+        self.setup_global_scroll()
     
     def create_sidebar(self):
         """Создание боковой панели"""
@@ -253,6 +260,59 @@ class MainWindow:
         # Делаем окно модальным
         top.grab_set()
         top.wait_window()
+
+    def setup_global_scroll(self):
+        """Настройка глобальной прокрутки для всего приложения"""
+        # Привязываем события прокрутки к главному окну
+        def on_mousewheel(event):
+            # Получаем текущий активный фрейм
+            current_frame = self.frame_containers.get(self.current_section)
+            if current_frame:
+                # Ищем canvas в текущем фрейме
+                canvas = self.find_canvas_in_frame(current_frame)
+                if canvas:
+                    # Прокручиваем canvas
+                    canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+                    return "break"  # Останавливаем распространение события
+        
+        def on_button4(event):
+            # Для Linux тачпада (Button-4)
+            current_frame = self.frame_containers.get(self.current_section)
+            if current_frame:
+                canvas = self.find_canvas_in_frame(current_frame)
+                if canvas:
+                    canvas.yview_scroll(-1, "units")
+                    return "break"
+        
+        def on_button5(event):
+            # Для Linux тачпада (Button-5)
+            current_frame = self.frame_containers.get(self.current_section)
+            if current_frame:
+                canvas = self.find_canvas_in_frame(current_frame)
+                if canvas:
+                    canvas.yview_scroll(1, "units")
+                    return "break"
+        
+        # Привязываем события к главному окну
+        self.root.bind("<MouseWheel>", on_mousewheel)
+        self.root.bind("<Button-4>", on_button4)
+        self.root.bind("<Button-5>", on_button5)
+        
+        # Также привязываем к content_frame для надежности
+        self.content_frame.bind("<MouseWheel>", on_mousewheel)
+        self.content_frame.bind("<Button-4>", on_button4)
+        self.content_frame.bind("<Button-5>", on_button5)
+    
+    def find_canvas_in_frame(self, frame):
+        """Поиск canvas в фрейме рекурсивно"""
+        for widget in frame.winfo_children():
+            if isinstance(widget, tk.Canvas):
+                return widget
+            elif hasattr(widget, 'winfo_children'):
+                result = self.find_canvas_in_frame(widget)
+                if result:
+                    return result
+        return None
 
     def end_session(self):
         """Завершение сессии"""

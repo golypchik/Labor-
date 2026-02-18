@@ -8,6 +8,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 from PIL import Image, ImageTk
+from gui.clipboard_manager import setup_clipboard_manager
 
 
 class OtherInfoFrame:
@@ -79,6 +80,9 @@ class OtherInfoFrame:
     
     def create_widgets(self):
         """Создание виджетов фрейма"""
+        # Инициализируем менеджер буфера обмена для этого фрейма
+        self.clipboard_manager = setup_clipboard_manager(self.parent)
+        
         # Основной контейнер с прокруткой
         canvas = tk.Canvas(self.parent, bg="#ecf0f1")
         scrollbar = ttk.Scrollbar(self.parent, orient="vertical", command=canvas.yview)
@@ -95,15 +99,27 @@ class OtherInfoFrame:
         # Привязка прокрутки колесиком мыши и тачпадом
         def _on_mousewheel(event):
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            return "break"  # Останавливаем распространение события
         canvas.bind("<MouseWheel>", _on_mousewheel)
 
         # Для Linux с Button-4 и Button-5
         def _on_button4(event):
             canvas.yview_scroll(-1, "units")
+            return "break"  # Останавливаем распространение события
         def _on_button5(event):
             canvas.yview_scroll(1, "units")
+            return "break"  # Останавливаем распространение события
         canvas.bind("<Button-4>", _on_button4)
         canvas.bind("<Button-5>", _on_button5)
+        
+        # Привязка глобальной прокрутки к canvas
+        def _on_canvas_mousewheel(event):
+            # Если это вертикальная прокрутка, передаем управление глобальной системе
+            if hasattr(self, 'parent') and hasattr(self.parent, 'master'):
+                # Имитируем событие на главном окне
+                self.parent.master.event_generate("<MouseWheel>", delta=event.delta, when="tail")
+            return "break"
+        canvas.bind("<MouseWheel>", _on_canvas_mousewheel, add="+")
         
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
@@ -169,10 +185,40 @@ class OtherInfoFrame:
         text_scrollbar = tk.Scrollbar(text_container, command=mapping_text.yview)
         mapping_text.configure(yscrollcommand=text_scrollbar.set)
 
-        # Привязка прокрутки колесиком мыши
+        # Привязка прокрутки колесиком мыши и тачпадом
         def _on_text_mousewheel(event):
-            mapping_text.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            # Если поле активно и в нем идет работа - обрабатываем прокрутку внутри поля
+            if mapping_text.focus_get() == mapping_text and mapping_text['state'] != 'disabled':
+                # Обрабатываем разные значения delta для мыши и тачпада
+                delta = event.delta
+                if abs(delta) > 120:  # Тачпад часто дает большие значения
+                    delta = delta // 10  # Нормализуем
+                mapping_text.yview_scroll(int(-1 * (delta / 120)), "units")
+                return "break"  # Останавливаем распространение события
+            # Если поле не активно - не перехватываем прокрутку, пусть всплывает к глобальному обработчику
         mapping_text.bind("<MouseWheel>", _on_text_mousewheel)
+
+        # Для Linux с Button-4 и Button-5 (тачпад)
+        def _on_button4(event):
+            if mapping_text.focus_get() == mapping_text and mapping_text['state'] != 'disabled':
+                mapping_text.yview_scroll(-1, "units")
+                return "break"  # Останавливаем распространение события
+        def _on_button5(event):
+            if mapping_text.focus_get() == mapping_text and mapping_text['state'] != 'disabled':
+                mapping_text.yview_scroll(1, "units")
+                return "break"  # Останавливаем распространение события
+        mapping_text.bind("<Button-4>", _on_button4)
+        mapping_text.bind("<Button-5>", _on_button5)
+
+        # Дополнительные события для тачпадов
+        def _on_button_press_4(event):
+            if mapping_text.focus_get() == mapping_text and mapping_text['state'] != 'disabled':
+                mapping_text.yview_scroll(-1, "units")
+        def _on_button_press_5(event):
+            if mapping_text.focus_get() == mapping_text and mapping_text['state'] != 'disabled':
+                mapping_text.yview_scroll(1, "units")
+        mapping_text.bind("<ButtonPress-4>", _on_button_press_4)
+        mapping_text.bind("<ButtonPress-5>", _on_button_press_5)
 
         mapping_text.pack(side=tk.LEFT)
         text_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -191,6 +237,9 @@ class OtherInfoFrame:
         self.mapping_results.trace_add("write", update_mapping_text)
 
         self.mapping_results_widget = mapping_text
+
+        # Добавляем контекстное меню для текстового виджета
+        self.clipboard_manager.create_context_menu(mapping_text)
 
         # Кнопка очистки (ставим перед подсказками)
         clear_mapping_btn = tk.Button(
@@ -268,10 +317,40 @@ class OtherInfoFrame:
         conclusion_text_scrollbar = tk.Scrollbar(conclusion_text_container, command=self.conclusion_text.yview)
         self.conclusion_text.configure(yscrollcommand=conclusion_text_scrollbar.set)
 
-        # Привязка прокрутки колесиком мыши
+        # Привязка прокрутки колесиком мыши и тачпадом
         def _on_conclusion_text_mousewheel(event):
-            self.conclusion_text.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            # Если поле активно и в нем идет работа - обрабатываем прокрутку внутри поля
+            if self.conclusion_text.focus_get() == self.conclusion_text and self.conclusion_text['state'] != 'disabled':
+                # Обрабатываем разные значения delta для мыши и тачпада
+                delta = event.delta
+                if abs(delta) > 120:  # Тачпад часто дает большие значения
+                    delta = delta // 10  # Нормализуем
+                self.conclusion_text.yview_scroll(int(-1 * (delta / 120)), "units")
+                return "break"  # Останавливаем распространение события
+            # Если поле не активно - не перехватываем прокрутку, пусть всплывает к глобальному обработчику
         self.conclusion_text.bind("<MouseWheel>", _on_conclusion_text_mousewheel)
+
+        # Для Linux с Button-4 и Button-5 (тачпад)
+        def _on_button4(event):
+            if self.conclusion_text.focus_get() == self.conclusion_text and self.conclusion_text['state'] != 'disabled':
+                self.conclusion_text.yview_scroll(-1, "units")
+                return "break"  # Останавливаем распространение события
+        def _on_button5(event):
+            if self.conclusion_text.focus_get() == self.conclusion_text and self.conclusion_text['state'] != 'disabled':
+                self.conclusion_text.yview_scroll(1, "units")
+                return "break"  # Останавливаем распространение события
+        self.conclusion_text.bind("<Button-4>", _on_button4)
+        self.conclusion_text.bind("<Button-5>", _on_button5)
+
+        # Дополнительные события для тачпадов
+        def _on_button_press_4(event):
+            if self.conclusion_text.focus_get() == self.conclusion_text and self.conclusion_text['state'] != 'disabled':
+                self.conclusion_text.yview_scroll(-1, "units")
+        def _on_button_press_5(event):
+            if self.conclusion_text.focus_get() == self.conclusion_text and self.conclusion_text['state'] != 'disabled':
+                self.conclusion_text.yview_scroll(1, "units")
+        self.conclusion_text.bind("<ButtonPress-4>", _on_button_press_4)
+        self.conclusion_text.bind("<ButtonPress-5>", _on_button_press_5)
 
         self.conclusion_text.pack(side=tk.LEFT)
         conclusion_text_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -288,6 +367,9 @@ class OtherInfoFrame:
 
         self.conclusion_text.bind("<KeyRelease>", update_conclusion_var)
         self.conclusion.trace_add("write", update_conclusion_text)
+
+        # Добавляем контекстное меню для текстового виджета
+        self.clipboard_manager.create_context_menu(self.conclusion_text)
 
         # Кнопка очистки (справа от поля)
         clear_conclusion_btn = tk.Button(
@@ -329,7 +411,20 @@ class OtherInfoFrame:
         default_hint = "По результатам картирования зоны хранения лекарственных средств в кабинете старшей медсестры реабилитационного отделения №1 температурный режим превышал установленный диапазон (+15 ℃…+25 ℃), что свидетельствует о несоответствии данного параметра установленным критериям. Показатель относительной влажности воздуха на протяжении всего периода исследования находился в пределах допустимого значения (не более 60 %)."
         
         hint_text.insert("1.0", default_hint)
-        hint_text.config(state=tk.DISABLED)
+        hint_text.config(state=tk.NORMAL)  # Сделаем редактируемым для копирования
+        hint_text.config(state=tk.DISABLED)  # Но заблокируем редактирование
+        
+        # Добавляем контекстное меню для подсказки
+        self.clipboard_manager.create_context_menu(hint_text)
+        
+        # Добавляем обработку двойного клика для выделения всего текста
+        def select_all_on_double_click(event, widget=hint_text):
+            widget.tag_add(tk.SEL, "1.0", tk.END)
+            widget.mark_set(tk.INSERT, "1.0")
+            widget.see(tk.INSERT)
+            return "break"
+        
+        hint_text.bind("<Double-Button-1>", select_all_on_double_click)
         
         hint_text.pack()
         
@@ -353,21 +448,6 @@ class OtherInfoFrame:
         left_column.pack(side=tk.LEFT, fill=tk.Y, padx=5)
         left_column.pack_propagate(False)
 
-        tk.Label(
-            left_column,
-            text="Изображения:",
-            font=("Arial", 10, "bold"),
-            bg="#ecf0f1"
-        ).pack(anchor=tk.W, pady=5)
-
-        # Список изображений
-        self.images_listbox = tk.Listbox(left_column, height=8, font=("Arial", 9))
-        images_scrollbar = ttk.Scrollbar(left_column, orient=tk.VERTICAL, command=self.images_listbox.yview)
-        self.images_listbox.configure(yscrollcommand=images_scrollbar.set)
-
-        self.images_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        images_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
         # Заполняем список начальными элементами
         image_buttons = [
             ("Планировка зоны хранения", "layout"),
@@ -376,37 +456,93 @@ class OtherInfoFrame:
             ("Влажностная карта", "humidity_map")
         ]
 
-        for text, key in image_buttons:
-            self.images_listbox.insert(tk.END, f"{text} - Не загружено")
+        # Заменяем кнопки с новыми названиями
+        button_labels = [
+            "Загрузить планировку хранения",
+            "Загрузить расстановку логгеров", 
+            "Загрузить температурную карту",
+            "Загрузить влажностную карту"
+        ]
 
-        # Привязываем выбор к показу превью
-        self.images_listbox.bind('<<ListboxSelect>>', self.on_image_select)
+        # Создаем метки для индикаторов загрузки и кнопки управления вместе
+        self.image_status_labels = {}
+        self.image_orientation_vars = {}  # Хранит переменные для ориентации
+        for i, (text, key) in enumerate(image_buttons):
+            # Контейнер для метки статуса и кнопки
+            item_container = tk.Frame(left_column, bg="#ecf0f1")
+            item_container.pack(fill=tk.X, pady=2, padx=10)
 
-        # Кнопки управления
-        buttons_frame = tk.Frame(left_column, bg="#ecf0f1")
-        buttons_frame.pack(fill=tk.X, pady=10)
+            # Метка статуса
+            status_label = tk.Label(
+                item_container,
+                text=f"{text} - Не загружено",
+                font=("Arial", 9),
+                bg="#ecf0f1",
+                fg="#666"
+            )
+            status_label.pack(anchor=tk.W, pady=2)
+            self.image_status_labels[key] = status_label
 
-        for text, key in image_buttons:
-            btn_container = tk.Frame(buttons_frame, bg="#ecf0f1")
+            # Контейнер для кнопок (загрузки и удаления)
+            btn_container = tk.Frame(item_container, bg="#ecf0f1")
             btn_container.pack(fill=tk.X, pady=2)
 
-            # Кнопка загрузки
+            # Кнопка загрузки с новым названием
             load_btn = tk.Button(
                 btn_container,
-                text="Загрузить",
+                text=button_labels[i],
                 command=lambda k=key: self.load_image(k),
                 bg="#3498db",
                 fg="white",
                 font=("Arial", 9),
-                padx=8,
-                pady=2,
-                cursor="hand2"
+                width=25,  # Фиксированная ширина для всех кнопок
+                height=2,  # Фиксированная высота для всех кнопок
+                cursor="hand2",
+                wraplength=180  # Перенос текста при необходимости
             )
             load_btn.pack(side=tk.LEFT, padx=2)
 
             self.images[f"{key}_btn"] = load_btn
 
-            # Кнопка удаления (✕)
+            # Контейнер для ориентации страницы
+            orientation_container = tk.Frame(btn_container, bg="#ecf0f1")
+            orientation_container.pack(side=tk.LEFT, padx=2)
+
+            tk.Label(
+                orientation_container,
+                text="Ориентация:",
+                font=("Arial", 8),
+                bg="#ecf0f1",
+                fg="#666"
+            ).pack(anchor=tk.W)
+
+            orientation_var = tk.StringVar(value="portrait")  # По умолчанию книжная
+            self.image_orientation_vars[key] = orientation_var
+
+            # Кнопки выбора ориентации
+            portrait_btn = tk.Radiobutton(
+                orientation_container,
+                text="Книжная",
+                variable=orientation_var,
+                value="portrait",
+                font=("Arial", 8),
+                bg="#ecf0f1",
+                cursor="hand2"
+            )
+            portrait_btn.pack(side=tk.LEFT, padx=2)
+
+            landscape_btn = tk.Radiobutton(
+                orientation_container,
+                text="Альбомная",
+                variable=orientation_var,
+                value="landscape",
+                font=("Arial", 8),
+                bg="#ecf0f1",
+                cursor="hand2"
+            )
+            landscape_btn.pack(side=tk.LEFT, padx=2)
+
+            # Кнопка удаления (✕) - теперь справа от кнопки загрузки
             delete_btn = tk.Button(
                 btn_container,
                 text="✕",
@@ -421,7 +557,22 @@ class OtherInfoFrame:
 
             self.images[f"{key}_delete_btn"] = delete_btn
 
-        # Правая колонка - превью
+            # Кнопка превью - между загрузкой и удалением
+            preview_btn = tk.Button(
+                btn_container,
+                text="Превью",
+                command=lambda k=key: self.show_image_preview(k),
+                bg="#95a5a6",
+                fg="white",
+                font=("Arial", 9),
+                width=8,
+                cursor="hand2"
+            )
+            preview_btn.pack(side=tk.RIGHT, padx=2)
+
+            self.images[f"{key}_preview_btn"] = preview_btn
+
+        # Правая колонка - превью (уменьшаем ширину для размещения длинных названий кнопок)
         right_column = tk.Frame(images_container, bg="#ecf0f1")
         right_column.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5)
 
@@ -494,6 +645,19 @@ class OtherInfoFrame:
             cursor="hand2"
         )
         add_risk_btn.pack(side=tk.LEFT, padx=5)
+
+        edit_risk_btn = tk.Button(
+            risks_buttons_frame,
+            text="✎ Редактировать выбранное",
+            command=self.edit_risk_area,
+            bg="#f39c12",
+            fg="white",
+            font=("Arial", 10),
+            padx=15,
+            pady=5,
+            cursor="hand2"
+        )
+        edit_risk_btn.pack(side=tk.LEFT, padx=5)
 
         remove_risk_btn = tk.Button(
             risks_buttons_frame,
@@ -700,16 +864,6 @@ class OtherInfoFrame:
         else:
             messagebox.showwarning("Предупреждение", "Выберите рекомендацию для удаления")
 
-    def on_image_select(self, event):
-        """Обработчик выбора изображения в списке"""
-        selection = self.images_listbox.curselection()
-        if selection:
-            index = selection[0]
-            # Определяем ключ изображения по индексу
-            image_keys = ['layout', 'loggers', 'temp_map', 'humidity_map']
-            if index < len(image_keys):
-                key = image_keys[index]
-                self.show_image_preview(key)
 
     def show_image_preview(self, key):
         """Показ превью выбранного изображения"""
@@ -773,6 +927,11 @@ class OtherInfoFrame:
     
     def load_image(self, key):
         """Загрузка изображения"""
+        # Проверяем, загружено ли уже изображение для этого ключа
+        if self.images[key] is not None:
+            messagebox.showwarning("Предупреждение", "Изображение уже загружено. Удалите его перед загрузкой нового.")
+            return
+
         file_path = filedialog.askopenfilename(
             title=f"Выберите изображение для {key}",
             filetypes=[("Image files", "*.png *.jpg *.jpeg *.bmp"), ("All files", "*.*")]
@@ -784,7 +943,7 @@ class OtherInfoFrame:
                 img = Image.open(file_path)
                 self.images[key] = file_path
 
-                # Обновляем список изображений
+                # Обновляем метку статуса
                 image_titles = {
                     'layout': 'Планировка зоны хранения',
                     'loggers': 'Расстановка логгеров',
@@ -793,16 +952,15 @@ class OtherInfoFrame:
                 }
 
                 title = image_titles.get(key, key)
-                # Находим индекс в списке
-                for i in range(self.images_listbox.size()):
-                    if title in self.images_listbox.get(i):
-                        self.images_listbox.delete(i)
-                        self.images_listbox.insert(i, f"{title} - Загружено")
-                        break
+                if key in self.image_status_labels:
+                    self.image_status_labels[key].config(text=f"{title} - Загружено", fg="#27ae60")
 
                 # Показываем кнопку удаления
                 if f"{key}_delete_btn" in self.images:
                     self.images[f"{key}_delete_btn"].pack(side=tk.RIGHT, padx=2)
+
+                # Автоматически показываем превью загруженного изображения
+                self.show_image_preview(key)
 
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось загрузить изображение:\n{e}")
@@ -852,6 +1010,62 @@ class OtherInfoFrame:
             index = selection[0]
             self.risks_listbox.delete(index)
             del self.risk_areas[index]
+
+    def edit_risk_area(self):
+        """Редактирование выбранного места риска"""
+        selection = self.risks_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("Предупреждение", "Выберите место риска для редактирования")
+            return
+
+        index = selection[0]
+        current_description = self.risk_areas[index]
+
+        dialog = tk.Toplevel(self.parent)
+        dialog.title("Редактировать место риска")
+        dialog.geometry("500x300")
+        dialog.transient(self.parent)
+        dialog.grab_set()
+        
+        tk.Label(
+            dialog,
+            text="Описание места риска:",
+            font=("Arial", 11)
+        ).pack(pady=10)
+        
+        text_area = tk.Text(dialog, height=10, width=50, font=("Arial", 10))
+        text_area.pack(pady=10, padx=20, fill=tk.BOTH, expand=True)
+        
+        # Загружаем текущее описание
+        text_area.insert("1.0", current_description)
+        text_area.focus()
+        text_area.mark_set(tk.INSERT, "1.0")
+        text_area.see(tk.INSERT)
+        
+        def save_risk():
+            description = text_area.get("1.0", tk.END).strip()
+            if description:
+                self.risk_areas[index] = description
+                # Обновляем отображение в listbox
+                self.risks_listbox.delete(index)
+                self.risks_listbox.insert(index, description[:50] + ("..." if len(description) > 50 else ""))
+                # Выделяем обновленный элемент
+                self.risks_listbox.selection_set(index)
+                dialog.destroy()
+            else:
+                messagebox.showwarning("Предупреждение", "Введите описание места риска")
+        
+        tk.Button(
+            dialog,
+            text="Сохранить",
+            command=save_risk,
+            bg="#27ae60",
+            fg="white",
+            font=("Arial", 10),
+            padx=20,
+            pady=5,
+            cursor="hand2"
+        ).pack(pady=10)
     
     def show_custom_message(self, title, message):
         """Кастомное модальное окно без системного звука"""
@@ -891,6 +1105,33 @@ class OtherInfoFrame:
     def get_selected_recommendations(self):
         """Получение списка рекомендаций для отчёта (в порядке отображения)"""
         return self.recommendations_list.copy()
+
+    def get_image_orientation(self, key):
+        """Получение выбранной ориентации для изображения"""
+        if key in self.image_orientation_vars:
+            return self.image_orientation_vars[key].get()
+        return "portrait"  # По умолчанию книжная ориентация
+
+    def get_all_data(self):
+        """Получение всех данных для отчета"""
+        return {
+            'mapping_results': self.mapping_results.get(),
+            'conclusion': self.conclusion.get(),
+            'risk_areas': self.risk_areas.copy(),
+            'selected_recommendations': self.get_selected_recommendations(),
+            'image_orientations': {
+                'layout': self.get_image_orientation('layout'),
+                'loggers': self.get_image_orientation('loggers'),
+                'temp_map': self.get_image_orientation('temp_map'),
+                'humidity_map': self.get_image_orientation('humidity_map')
+            },
+            'images': {
+                'layout': self.images['layout'],
+                'loggers': self.images['loggers'],
+                'temp_map': self.images['temp_map'],
+                'humidity_map': self.images['humidity_map']
+            }
+        }
 
     def clear_data(self):
         """Очистка данных фрейма"""
@@ -936,7 +1177,7 @@ class OtherInfoFrame:
         """Удаление загруженного изображения"""
         self.images[key] = None
 
-        # Обновляем список изображений
+        # Обновляем метку статуса
         image_titles = {
             'layout': 'Планировка зоны хранения',
             'loggers': 'Расстановка логгеров',
@@ -945,14 +1186,8 @@ class OtherInfoFrame:
         }
 
         title = image_titles.get(key, key)
-        # Находим индекс в списке
-        for i in range(self.images_listbox.size()):
-            if title in self.images_listbox.get(i):
-                self.images_listbox.delete(i)
-                self.images_listbox.insert(i, f"{title} - Не загружено")
-                break
-
-        # Кнопка удаления остается видимой для визуальной целостности
+        if key in self.image_status_labels:
+            self.image_status_labels[key].config(text=f"{title} - Не загружено", fg="#666")
 
     def pack_forget(self):
         """Скрытие фрейма"""

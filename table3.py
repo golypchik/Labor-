@@ -35,8 +35,29 @@ def create_dynamic_tables3(doc, selected_periods, periods_db_path, logger_stats_
                            mapping_results, conclusion, contract_date,
                            temp_homogeneity_text=None, hum_homogeneity_text=None,
                            selected_recommendations=None):
+    # Получаем данные ключевых элементов из БД
+    settings_db_path = periods_db_path.replace('periods.db', 'settings.db')
+    temp_mode = ""
+    humidity_mode = ""
+    
+    try:
+        import sqlite3
+        conn = sqlite3.connect(settings_db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT key, value FROM settings WHERE key IN ('temp_mode', 'humidity_mode')")
+        rows = cursor.fetchall()
+        conn.close()
+        
+        for key, value in rows:
+            if key == 'temp_mode':
+                temp_mode = value or ""
+            elif key == 'humidity_mode':
+                humidity_mode = value or ""
+    except Exception as e:
+        print(f"Ошибка получения данных ключевых элементов: {e}")
+
     # Создание сводной таблицы периодов (только один раз)
-    #create_periods_summary(doc, periods_db_path, selected_periods)
+    create_periods_summary(doc, periods_db_path, selected_periods, temp_mode, humidity_mode)
 
     # Подключение к базам данных
     periods_conn = sqlite3.connect(periods_db_path)
@@ -583,26 +604,11 @@ def create_dynamic_tables3(doc, selected_periods, periods_db_path, logger_stats_
 
     return paragraph_index, out_of_range_result_temp
 
-#def create_periods_summary(doc, periods_db_path, selected_periods):
+def create_periods_summary(doc, periods_db_path, selected_periods, temp_mode=None, humidity_mode=None):
+    """Создание таблицы 1 - План-график картирования"""
     # Подключение к базе данных периодов
     periods_conn = sqlite3.connect(periods_db_path)
     periods_cursor = periods_conn.cursor()
-
-    # Добавление заголовка "6 Картирование"
-    heading_6 = doc.add_paragraph()
-    heading_6.add_run().add_tab()
-    run = heading_6.add_run("6 Картирование")
-    run.bold = True
-    run.font.name = 'Times New Roman'
-    run.font.size = Pt(12)
-    heading_6.alignment = WD_ALIGN_PARAGRAPH.LEFT
-
-    # Добавление текста перед таблицей
-    plan_text = doc.add_paragraph()
-    plan_text.add_run().add_tab()
-    run = plan_text.add_run("План-график картирования представлен в таблице 1.")
-    run.font.name = 'Times New Roman'
-    run.font.size = Pt(12)
 
     # Добавление заголовка таблицы
     table_heading = doc.add_paragraph()
@@ -610,33 +616,42 @@ def create_dynamic_tables3(doc, selected_periods, periods_db_path, logger_stats_
     run.font.name = 'Times New Roman'
     run.font.size = Pt(12)
     table_heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    table_heading.paragraph_format.space_before = Pt(4)  # Интервал перед текстом 4 пт
+    table_heading.paragraph_format.space_after = Pt(2)   # Интервал после текста 2 пт
 
     # Создание таблицы
     table = doc.add_table(rows=1, cols=4)
     table.style = 'Table Grid'
 
-    # Установка ширины столбцов (в процентах от ширины страницы)
-    widths = [20, 30, 30, 20]
-    for i, width in enumerate(widths):
-        table.columns[i].width = Cm(width * 0.15)
+    # Установка точной ширины столбцов в сантиметрах
+    column_widths = [3.16, 5.6, 5.1, 4.14]  # Точные ширины столбцов
+    for i, width in enumerate(column_widths):
+        table.columns[i].width = Cm(width)
 
-    # Заголовки таблицы
-    headers = ["Дата / время проведения", "Исследование", "Диапазон климатических условий (температура, влажность)", "Время проведения исследований"]
+    # Заголовки таблицы (обновленные - поменяны местами столбцы)
+    headers = ["Дата и время проведения", "Исследование", "Диапазон климатических условий", "Период проведения исследования"]
     for i, header in enumerate(headers):
         cell = table.cell(0, i)
         paragraph = cell.paragraphs[0]
         run = paragraph.add_run(header)
         run.font.name = 'Times New Roman'
-        run.font.size = Pt(12)
+        run.font.size = Pt(11)  # Уменьшаем размер шрифта до 11
         run.bold = True
         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
         cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+        # Устанавливаем высоту всех строк в таблице на 1 см
+        cell.height = Cm(1.0)
+        # Устанавливаем шрифт для заголовка
+        for paragraph in cell.paragraphs:
+            for run in paragraph.runs:
+                run.font.name = 'Times New Roman'
+                run.font.size = Pt(11)
 
     # Заполнение таблицы данными выбранных периодов
     for index, period in enumerate(selected_periods, start=1):
         period_id = period[0]
         periods_cursor.execute("""
-            SELECT start_time, end_time, required_mode_from, required_mode_to
+            SELECT start_time, end_time, name, required_mode_from, required_mode_to
             FROM periods 
             WHERE id = ?
         """, (period_id,))
@@ -644,17 +659,15 @@ def create_dynamic_tables3(doc, selected_periods, periods_db_path, logger_stats_
         
         row = table.add_row().cells
         
-        # Форматирование даты и времени
+        # Форматирование даты и времени (новый формат)
         start = datetime.strptime(period_data[0], "%Y-%m-%d %H:%M:%S")
         end = datetime.strptime(period_data[1], "%Y-%m-%d %H:%M:%S")
-        row[0].text = f"{start.strftime('%d.%m.%Y %H:%M')} - {end.strftime('%d.%m.%Y %H:%M')}"
+        row[0].text = f"{start.strftime('%d.%m.%Y %H:%M')} – {end.strftime('%d.%m.%Y %H:%M')}"
         
-        row[1].text = "Здесь будет ввод пользователя"  # Пока нет данных об исследовании
+        # Название исследования (из поля name)
+        row[1].text = period_data[2] if period_data[2] else "Не указано"
         
-        # Форматирование диапазона климатических условий
-        row[2].text = f"Температура: +{period_data[2]}℃...+{period_data[3]}℃"
-        
-        # Расчет продолжительности периода
+        # Расчет периода проведения исследования (новый столбец)
         duration = end - start
         days = duration.days
         hours, remainder = divmod(duration.seconds, 3600)
@@ -668,16 +681,35 @@ def create_dynamic_tables3(doc, selected_periods, periods_db_path, logger_stats_
         if minutes > 0:
             duration_str += f" {minutes} {'минута' if minutes == 1 else 'минуты' if 1 < minutes < 5 else 'минут'}"
         
+        # Форматирование диапазона климатических условий
+        climate_conditions = ""
+        
+        # Добавляем температуру из поля temp_mode (температурный режим из ключевых элементов)
+        if temp_mode and temp_mode.strip():
+            climate_conditions += f"Температура: {temp_mode}"
+        
+        # Добавляем влажность из параметра humidity_mode, если она указана
+        if humidity_mode and humidity_mode.strip():
+            if climate_conditions:
+                climate_conditions += " "
+            climate_conditions += f"Влажность: {humidity_mode}"
+        
+        row[2].text = climate_conditions
+        
         row[3].text = duration_str.strip()
 
-        # Центрирование текста в ячейках
+        # Центрирование текста в ячейках и установка шрифта
         for cell in row:
             cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            # Устанавливаем высоту всех строк в таблице на 1 см
+            cell.height = Cm(1.0)
+            # Устанавливаем шрифт для всех ячеек в строке
+            for paragraph in cell.paragraphs:
+                for run in paragraph.runs:
+                    run.font.name = 'Times New Roman'
+                    run.font.size = Pt(11)
 
     # Закрытие соединения с базой данных
     periods_conn.close()
-
-    # Добавляем разрыв страницы после таблицы
-    doc.add_page_break()
 
 

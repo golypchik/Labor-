@@ -91,6 +91,47 @@ class ReportGenerator:
             '{{ ДАТА_ПРОВЕДЕНИЯ_ПОВТОРОНОГО_КАРТИРОВАНИЯ }}': key_elements.get('repeated_mapping_date', ''),
             '{{ ИНТЕРВАЛ }}': key_elements.get('interval', ''),
         }
+        
+        # Все плейсхолдеры теперь будут иметь размер шрифта 12pt
+        
+        # Импортируем необходимые модули для работы со шрифтами
+        from docx.shared import Pt
+
+        # Функция для определения, находимся ли мы на первой странице
+        def is_first_page(paragraph):
+            """Определяем, находится ли параграф на первой странице"""
+            # Надежная эвристика: считаем первые 15 параграфов первой страницей
+            # Это покрывает типичный объем титульной страницы
+            try:
+                # Проверяем, является ли параграф первым в документе или одним из первых
+                paragraph_index = doc.paragraphs.index(paragraph) if paragraph in doc.paragraphs else -1
+                if paragraph_index >= 0 and paragraph_index < 15:  # Первые 15 параграфов считаем первой страницей
+                    return True
+                return False
+            except:
+                return False
+
+        # Функция для определения, находится ли параграф в таблице
+        def is_in_table(paragraph):
+            """Определяем, находится ли параграф в таблице"""
+            # Проверяем, является ли родительский элемент параграфа ячейкой таблицы
+            try:
+                parent = paragraph._p.getparent()
+                if parent is not None:
+                    # Проверяем, является ли родитель ячейкой таблицы
+                    return parent.tag.endswith('tc')
+                return False
+            except:
+                return False
+
+        # Функция для применения размера шрифта 12pt ко всем плейсхолдерам
+        def apply_font_size(run, placeholder, paragraph_context):
+            """Устанавливаем размер шрифта 12pt для всех плейсхолдеров"""
+            # Устанавливаем размер шрифта 12pt для всех плейсхолдеров независимо от контекста
+            run.font.size = Pt(12)
+            
+            # Устанавливаем шрифт Times New Roman для всех случаев
+            run.font.name = 'Times New Roman'
 
         # Получаем список фото
         photo_paths_str = key_elements.get('photo_paths', '')
@@ -108,8 +149,14 @@ class ReportGenerator:
         for paragraph in doc.paragraphs:
             if id(paragraph) in processed_paragraphs:
                 continue
+            
+            # Определяем контекст параграфа
+            paragraph_context = {
+                'is_first_page': is_first_page(paragraph),
+                'is_table': is_in_table(paragraph)
+            }
                 
-                # Обрабатываем плейсхолдеры с жирным форматированием
+            # Обрабатываем плейсхолдеры с жирным форматированием
             has_bold_placeholders = False
             for placeholder in bold_placeholders:
                 if placeholder in paragraph.text and placeholder_mapping.get(placeholder, ''):
@@ -149,6 +196,8 @@ class ReportGenerator:
                                 value = '\n'.join(line if line.strip() else line for line in lines)
                         run = paragraph.add_run(value)
                         run.bold = True
+                        # Применяем контекстно-зависимый размер шрифта
+                        apply_font_size(run, found_placeholder, paragraph_context)
                     # Добавляем отступ слева для текста из плейсхолдера
                     paragraph.paragraph_format.left_indent = Inches(0.1)  # Отступ слева
                     # Переместить позицию после текущего плейсхолдера
@@ -180,16 +229,13 @@ class ReportGenerator:
                     # Вставляем сами изображения в текущий параграф с выравниванием по центру
                     paragraph.alignment = 1  # 0 - левый, 1 - центрированный, 2 - правый
                     photos = [Path(p.strip()) for p in photo_paths_str.split(',') if p.strip()]
-                    print(f"Найдено {len(photos)} фото для вставки")
                     # Разбиваем на группы по 3 фото
                     for i in range(0, len(photos), 3):
                         row_photos = photos[i:i+3]
-                        print(f"Ряд {i//3 + 1}: {[p.name for p in row_photos]}")
                         
                         for j, photo_path in enumerate(row_photos):
                             try:
                                 run = paragraph.add_run()
-                                print(f"Добавление фото: {photo_path}")
                                 img = Image.open(photo_path)
                                 # Фиксированный размер: 4x5 см или 5x4 см в зависимости от ориентации
                                 # 1 дюйм = 2.54 см
@@ -213,7 +259,6 @@ class ReportGenerator:
                                 
                                 # Вставляем изображение в документ
                                 run.add_picture(str(temp_path), width=Inches(width_inches), height=Inches(height_inches))
-                                print(f"Фото вставлено: {temp_path}")
                                 
                                 # Добавляем отступ между фото (если не последняя в ряду)
                                 if j < len(row_photos) - 1:
@@ -221,7 +266,6 @@ class ReportGenerator:
                                     # Уменьшаем отступ между фото до минимального
                                     run.add_text(' ')  # Добавляем один пробел вместо табуляции
                             except Exception as e:
-                                print(f"Ошибка вставки изображения {photo_path}: {e}")
                                 import traceback
                                 traceback.print_exc()
                         
@@ -230,7 +274,6 @@ class ReportGenerator:
                             paragraph.add_run().add_break()
                 else:
                     # Если фото нет, просто удаляем плейсхолдер
-                    print("Фото не найдены")
                     paragraph.text = re.sub(photo_loop_pattern, '', paragraph.text, flags=re.IGNORECASE | re.DOTALL)
                     
                 processed_paragraphs.add(id(paragraph))
@@ -249,6 +292,12 @@ class ReportGenerator:
                     if has_bold_placeholders:
                         # Для ячеек с жирными плейсхолдерами обрабатываем runs в каждом параграфе
                         for paragraph in cell.paragraphs:
+                            # Определяем контекст параграфа (в таблице)
+                            paragraph_context = {
+                                'is_first_page': is_first_page(paragraph),
+                                'is_table': True  # Ячейка таблицы всегда в таблице
+                            }
+                            
                             text = paragraph.text
                             # Очищаем параграф
                             paragraph.clear()
@@ -272,8 +321,11 @@ class ReportGenerator:
                                 if pos < min_pos:
                                     paragraph.add_run(text[pos:min_pos])
                                 # Добавить жирный плейсхолдер
-                                run = paragraph.add_run(placeholder_mapping[found_placeholder])
+                                value = placeholder_mapping[found_placeholder]
+                                run = paragraph.add_run(value)
                                 run.bold = True
+                                # Применяем контекстно-зависимый размер шрифта
+                                apply_font_size(run, found_placeholder, paragraph_context)
                                 # Добавляем отступ слева для текста из плейсхолдера
                                 paragraph.paragraph_format.left_indent = Inches(0.1)  # Отступ слева
                                 # Переместить позицию после текущего плейсхолдера
@@ -357,6 +409,12 @@ class ReportGenerator:
                         break
                         
                 if has_bold_placeholders:
+                    # Определяем контекст параграфа (в таблице)
+                    paragraph_context = {
+                        'is_first_page': is_first_page(paragraph),
+                        'is_table': True  # Вложенная ячейка таблицы всегда в таблице
+                    }
+                    
                     text = paragraph.text
                     # Очищаем параграф
                     paragraph.clear()
@@ -380,8 +438,11 @@ class ReportGenerator:
                         if pos < min_pos:
                             paragraph.add_run(text[pos:min_pos])
                         # Добавить жирный плейсхолдер
-                        run = paragraph.add_run(placeholder_mapping[found_placeholder])
+                        value = placeholder_mapping[found_placeholder]
+                        run = paragraph.add_run(value)
                         run.bold = True
+                        # Применяем контекстно-зависимый размер шрифта
+                        apply_font_size(run, found_placeholder, paragraph_context)
                         # Добавляем отступ слева для текста из плейсхолдера
                         paragraph.paragraph_format.left_indent = Inches(0.1)  # Отступ слева
                         # Переместить позицию после текущего плейсхолдера
@@ -552,11 +613,25 @@ class ReportGenerator:
             period_images = {}  # TODO: добавить графики периодов
             use_humidity = other_info.get('use_humidity', False) if other_info else False
             logger_screenshots = other_info.get('logger_screenshots', []) if other_info else []
+            
+            # Получаем ориентацию изображений из other_info
+            image_orientations = {}
+            if other_info and 'image_orientations' in other_info:
+                image_orientations = other_info['image_orientations']
+            else:
+                # Если ориентации не переданы, используем книжную по умолчанию
+                image_orientations = {
+                    'layout': 'portrait',
+                    'loggers': 'portrait',
+                    'temp_map': 'portrait',
+                    'humidity_map': 'portrait'
+                }
 
             prilog.create_appendices(
                 doc, images, saved_risk_areas, selected_template_var, period_images,
                 selected_recommendations, use_humidity=use_humidity,
-                logger_screenshots=logger_screenshots
+                logger_screenshots=logger_screenshots,
+                image_orientations=image_orientations
             )
             
             # Сохраняем отчет

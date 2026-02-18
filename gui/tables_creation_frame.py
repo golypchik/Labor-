@@ -13,6 +13,7 @@ from pathlib import Path
 
 from report_generation.report_generator import ReportGenerator
 from data_processing.excel_processor import ExcelProcessor
+from gui.clipboard_manager import setup_clipboard_manager
 
 
 class TablesCreationFrame:
@@ -36,6 +37,9 @@ class TablesCreationFrame:
     
     def create_widgets(self):
         """Создание виджетов фрейма"""
+        # Инициализируем менеджер буфера обмена для этого фрейма
+        self.clipboard_manager = setup_clipboard_manager(self.parent)
+        
         # Основной контейнер с прокруткой
         canvas = tk.Canvas(self.parent, bg="#ecf0f1")
         scrollbar = ttk.Scrollbar(self.parent, orient="vertical", command=canvas.yview)
@@ -52,15 +56,27 @@ class TablesCreationFrame:
         # Привязка прокрутки колесиком мыши и тачпадом
         def _on_mousewheel(event):
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            return "break"  # Останавливаем распространение события
         canvas.bind("<MouseWheel>", _on_mousewheel)
 
         # Для Linux с Button-4 и Button-5
         def _on_button4(event):
             canvas.yview_scroll(-1, "units")
+            return "break"  # Останавливаем распространение события
         def _on_button5(event):
             canvas.yview_scroll(1, "units")
+            return "break"  # Останавливаем распространение события
         canvas.bind("<Button-4>", _on_button4)
         canvas.bind("<Button-5>", _on_button5)
+        
+        # Привязка глобальной прокрутки к canvas
+        def _on_canvas_mousewheel(event):
+            # Если это вертикальная прокрутка, передаем управление глобальной системе
+            if hasattr(self, 'parent') and hasattr(self.parent, 'master'):
+                # Имитируем событие на главном окне
+                self.parent.master.event_generate("<MouseWheel>", delta=event.delta, when="tail")
+            return "break"
+        canvas.bind("<MouseWheel>", _on_canvas_mousewheel, add="+")
         
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
@@ -114,9 +130,15 @@ class TablesCreationFrame:
         temp_min_entry = tk.Entry(temp_frame, textvariable=self.temp_min, width=10, font=("Arial", 10))
         temp_min_entry.pack(side=tk.LEFT, padx=5)
         
+        # Добавляем контекстное меню для виджетов ввода
+        self.clipboard_manager.create_context_menu(temp_min_entry)
+        
         tk.Label(temp_frame, text="до", font=("Arial", 10), bg="#ecf0f1").pack(side=tk.LEFT, padx=5)
         temp_max_entry = tk.Entry(temp_frame, textvariable=self.temp_max, width=10, font=("Arial", 10))
         temp_max_entry.pack(side=tk.LEFT, padx=5)
+        
+        # Добавляем контекстное меню для виджетов ввода
+        self.clipboard_manager.create_context_menu(temp_max_entry)
         
         tk.Label(temp_frame, text="°C", font=("Arial", 10), bg="#ecf0f1").pack(side=tk.LEFT, padx=5)
         
@@ -137,9 +159,15 @@ class TablesCreationFrame:
         humidity_min_entry = tk.Entry(humidity_frame, textvariable=self.humidity_min, width=10, font=("Arial", 10))
         humidity_min_entry.pack(side=tk.LEFT, padx=5)
         
+        # Добавляем контекстное меню для виджетов ввода
+        self.clipboard_manager.create_context_menu(humidity_min_entry)
+        
         tk.Label(humidity_frame, text="до", font=("Arial", 10), bg="#ecf0f1").pack(side=tk.LEFT, padx=5)
         humidity_max_entry = tk.Entry(humidity_frame, textvariable=self.humidity_max, width=10, font=("Arial", 10))
         humidity_max_entry.pack(side=tk.LEFT, padx=5)
+        
+        # Добавляем контекстное меню для виджетов ввода
+        self.clipboard_manager.create_context_menu(humidity_max_entry)
         
         tk.Label(humidity_frame, text="%", font=("Arial", 10), bg="#ecf0f1").pack(side=tk.LEFT, padx=5)
         
@@ -181,6 +209,41 @@ class TablesCreationFrame:
         
         scrollbar_periods = ttk.Scrollbar(periods_list_frame, orient=tk.VERTICAL, command=self.periods_tree.yview)
         self.periods_tree.configure(yscrollcommand=scrollbar_periods.set)
+        
+        # Привязка прокрутки колесиком мыши и тачпадом к Treeview
+        def _on_tree_mousewheel(event):
+            # Если Treeview активен и в нем идет работа - обрабатываем прокрутку внутри поля
+            if self.periods_tree.focus_get() == self.periods_tree:
+                # Обрабатываем разные значения delta для мыши и тачпада
+                delta = event.delta
+                if abs(delta) > 120:  # Тачпад часто дает большие значения
+                    delta = delta // 10  # Нормализуем
+                self.periods_tree.yview_scroll(int(-1 * (delta / 120)), "units")
+                return "break"  # Останавливаем распространение события
+            # Если Treeview не активен - не перехватываем прокрутку, пусть всплывает к глобальному обработчику
+        self.periods_tree.bind("<MouseWheel>", _on_tree_mousewheel)
+
+        # Для Linux с Button-4 и Button-5 (тачпад)
+        def _on_button4(event):
+            if self.periods_tree.focus_get() == self.periods_tree:
+                self.periods_tree.yview_scroll(-1, "units")
+                return "break"  # Останавливаем распространение события
+        def _on_button5(event):
+            if self.periods_tree.focus_get() == self.periods_tree:
+                self.periods_tree.yview_scroll(1, "units")
+                return "break"  # Останавливаем распространение события
+        self.periods_tree.bind("<Button-4>", _on_button4)
+        self.periods_tree.bind("<Button-5>", _on_button5)
+
+        # Дополнительные события для тачпадов
+        def _on_button_press_4(event):
+            if self.periods_tree.focus_get() == self.periods_tree:
+                self.periods_tree.yview_scroll(-1, "units")
+        def _on_button_press_5(event):
+            if self.periods_tree.focus_get() == self.periods_tree:
+                self.periods_tree.yview_scroll(1, "units")
+        self.periods_tree.bind("<ButtonPress-4>", _on_button_press_4)
+        self.periods_tree.bind("<ButtonPress-5>", _on_button_press_5)
         
         self.periods_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar_periods.pack(side=tk.RIGHT, fill=tk.Y)
@@ -267,6 +330,9 @@ class TablesCreationFrame:
         if edit_data:
             name_entry.insert(0, edit_data['name'])
         name_entry.pack(side=tk.LEFT, padx=5)
+        
+        # Добавляем контекстное меню для виджетов ввода
+        self.clipboard_manager.create_context_menu(name_entry)
 
         # Дата и время начала
         start_frame = tk.Frame(dialog, bg="#ecf0f1")
@@ -278,6 +344,9 @@ class TablesCreationFrame:
             start_dt = datetime.strptime(edit_data['start'], "%Y-%m-%d %H:%M:%S")
             start_entry.insert(0, start_dt.strftime("%d.%m.%Y %H:%M"))
         start_entry.pack(side=tk.LEFT, padx=5)
+        
+        # Добавляем контекстное меню для виджетов ввода
+        self.clipboard_manager.create_context_menu(start_entry)
 
         # Кнопка очистки
         clear_start_btn = tk.Button(
@@ -318,6 +387,9 @@ class TablesCreationFrame:
             end_dt = datetime.strptime(edit_data['end'], "%Y-%m-%d %H:%M:%S")
             end_entry.insert(0, end_dt.strftime("%d.%m.%Y %H:%M"))
         end_entry.pack(side=tk.LEFT, padx=5)
+        
+        # Добавляем контекстное меню для виджетов ввода
+        self.clipboard_manager.create_context_menu(end_entry)
 
         # Кнопка очистки
         clear_end_btn = tk.Button(
@@ -551,6 +623,12 @@ class TablesCreationFrame:
                     'humidity_min': humidity_min_val,
                     'humidity_max': humidity_max_val,
                     'selected_recommendations': other_info_frame.get_selected_recommendations(),
+                    'image_orientations': {
+                        'layout': other_info_frame.get_image_orientation('layout'),
+                        'loggers': other_info_frame.get_image_orientation('loggers'),
+                        'temp_map': other_info_frame.get_image_orientation('temp_map'),
+                        'humidity_map': other_info_frame.get_image_orientation('humidity_map')
+                    }
                 }
             if project_mgmt:
                 other_info['use_humidity'] = project_mgmt.use_humidity.get()
